@@ -108,9 +108,8 @@ node scripts/pack.js '<items JSON>' [--limit 400]
 
 ### 第 4 步：API 转存（推荐）
 
-页面点击保存时调用的就是 `/share/transfer` 接口，参数中带目标目录 `path`。直接复用该接口可以精确控制每批落地位置，并彻底避开目录选择弹窗的交互问题。**该接口由服务端强制校验账号限额，与手动点击完全等价，不存在绕过。**
-
-先在页面上真实点一次保存（选中一个必然超限的大目录触发失败即可），在 network 面板捕获请求 URL 与参数，然后套用：
+页面点击保存时自身调用的就是 `/share/transfer` 接口，参数中的 `path` 即目标目录。复用页面自己的请求方式可以精确指定每批落地位置，并避开目录选择弹窗的交互问题。**该接口由服务端强制校验账号限额，与手动点击完全等价，不存在绕过。**
+以下参数模板与页面自身发起的请求保持一致。其中 `sekey` 与当前分享会话绑定，由页面在解析分享链接时生成，可从 `window.yunData` 读取，或以自动化环境获取页面自身发起的请求参数，不要写死：
 
 ```js
 // 建目录（目标目录必须先存在）
@@ -125,7 +124,7 @@ const mk = async (path) => {
 // 转存：errno 0 成功，errno 12 超限
 const transfer = async (fsids, target) => {
   const y = window.yunData;
-  const u = `https://pan.baidu.com/share/transfer?shareid=${y.shareid}&from=${y.share_uk}&sekey=${encodeURIComponent('<从捕获的请求 URL 复制>')}&ondup=newcopy&async=1&channel=chunlei&web=1&app_id=250528&bdstoken=${y.bdstoken}&clienttype=0`;
+  const u = `https://pan.baidu.com/share/transfer?shareid=${y.shareid}&from=${y.share_uk}&sekey=${encodeURIComponent('<分享会话参数，由页面自身携带，勿写死>')}&ondup=newcopy&async=1&channel=chunlei&web=1&app_id=250528&bdstoken=${y.bdstoken}&clienttype=0`;
   const body = `fsidlist=${encodeURIComponent(JSON.stringify(fsids))}&path=${encodeURIComponent(target)}`;
   const r = await fetch(u, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body });
   return await r.json();
@@ -137,11 +136,11 @@ const transfer = async (fsids, target) => {
 - `fsidlist` 是**字符串数组**（如 `["123456789"]`），fsid 取自 `/share/list` 返回的 `fs_id` 字段。
 - 按名称匹配 fsid 时，`server_filename` 可能包含不可见字符导致精确匹配失败。命中失败时改用 `includes()` 关键字搜索，不要逐字比对。
 - `path` 为网盘绝对路径，**目标目录必须已存在**（先 `mk`）。
-- `sekey`、`bdstoken` 等参数从页面捕获值或 `window.yunData` 获取，不要写死。
+- `sekey`、`bdstoken` 等会话参数从页面自身数据（`window.yunData`）或浏览器自动化环境提供的请求上下文读取，不要写死。
 - 响应 `extra.list[].to` 给出实际落地路径，可逐批核对。
 - `errno: 12` 时对失败批二分后重试；若单个目录项独享一批仍超限，说明该目录自身过大，需下钻其子项。
 - 单批文件数达到数百时，服务端可能转为异步处理，响应 `msg` 提示"文件转存中"，需延迟 10–15 秒后通过第 6 步校验。
-- 批间隔保持 1 秒以上，避免触发风控。
+- 批间隔保持 1 秒以上，保持与人工操作一致的请求节奏。
 
 **目录结构还原（逐层容器法）**：凡递归数超过 limit 需要下钻的目录，先在网盘目标位置预建同名容器目录（`mk`），再从分享中该目录的子层选子项转存进容器；子项若自身超限则继续往下一层。纯文件层按名称排序等分提交。
 
@@ -209,7 +208,9 @@ await (await fetch(`/api/search?key=${encodeURIComponent('关键词')}&dir=%2F&r
 
 ## 安全与合规
 
+- **本工具不提供任何绕过会员权益、解除下载限速或突破单次转存上限的功能**；所有请求均由服务端强制校验账号权益。如需更大的单次转存额度，应升级账号权益。
 - 仅操作用户本人授权的账号，只通过扫码登录，不索取账号密码；登录态保留在本地浏览器 profile，不上传。
 - 所有转存、建目录请求与网页界面自身发起的请求一致，由服务端强制校验账号权益，**不绕过任何限额**。
+- 适用场景：仅转存本人有权访问的内容。使用自动化方式访问服务可能不符合平台用户协议，并可能导致账号被限制或封禁，执行前应向用户明确提示该风险。
 - 删除、覆盖用户网盘已有文件前必须获得用户明确确认；临时文件优先移入回收站。
-- 使用本工具需遵守百度网盘用户协议，只转存用户有权获取的内容。
+- 使用者需自行确认使用行为符合百度网盘用户协议及适用法律法规，由此产生的责任由使用者自行承担。
